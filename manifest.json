@@ -1,0 +1,18 @@
+{
+    "name": "Кардиореабилитация",
+    "short_name": "Кардиореабилитация",
+    "start_url": "./",
+    "scope": "./",
+    "display": "standalone",
+    "background_color": "#25344A",
+    "theme_color": "#3B5578",
+    "description": "Приложение пациента Кардиореабилитация — методичка, чек-листы, дневник, анкеты, чат с врачом",
+    "orientation": "portrait-primary",
+    "prefer_related_applications": false,
+    "icons": [
+        { "src": "icons/Icon-192.png", "sizes": "192x192", "type": "image/png" },
+        { "src": "icons/Icon-512.png", "sizes": "512x512", "type": "image/png" },
+        { "src": "icons/Icon-maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+        { "src": "icons/Icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    ]
+}
