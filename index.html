@@ -29,17 +29,20 @@
      env(safe-area-inset-*) — отступы под чёлку/индикатор Home на iPhone
      (viewport-fit=cover в <meta name="viewport"> выше обязателен, иначе
      эти переменные всегда равны 0). */
-  /* height:100% в связке html→body→#screenRoot не всегда совпадает с
-     реальной видимой областью в установленном на экран «Домой» PWA на
-     iOS (известная особенность WebKit — "layout viewport" может
-     отличаться от фактического окна standalone-приложения, оставляя
-     пустую полосу снизу под нижней навигацией). 100dvh — "динамическая"
-     высота вьюпорта, которая всегда точно равна видимой области;
-     100% оставлен как fallback для браузеров без поддержки dvh. */
-  html, body{height:100%; height:100dvh;}
+  /* height:100%/100dvh в связке html→body→#screenRoot на практике
+     ВСЁ РАВНО не совпадает с реальной видимой областью в некоторых
+     установленных на экран «Домой» PWA на iOS (подтверждено на живом
+     iPhone 17 Pro Max — оставалась пустая полоса ~1.5см внизу под
+     навигацией даже со 100dvh). Самый надёжный способ для этого класса
+     багов — взять РЕАЛЬНУЮ высоту окна через JS (window.innerHeight) и
+     положить её в CSS-переменную --app-height, а не полагаться на
+     CSS-проценты/dvh-юниты, которые WebKit в standalone-режиме иногда
+     считает от "layout viewport", отличного от фактического окна
+     приложения. См. setAppHeight() в конце файла. */
+  html, body{height:100%;}
   body{margin:0; font-family:"Segoe UI", Arial, sans-serif; background:var(--bg);
     overflow:hidden; /* прокручивается только .content, не вся страница */}
-  #screenRoot{width:100%; height:100%; height:100dvh; background:var(--bg);
+  #screenRoot{width:100%; height:var(--app-height, 100dvh); background:var(--bg);
     display:flex; flex-direction:column; position:relative;}
   .topbar{background:var(--primary); color:#fff;
     padding:calc(env(safe-area-inset-top) + 14px) 16px 12px 16px; display:flex;
@@ -292,6 +295,31 @@
   </div>
 </div>
 
+<!-- подсказка к калькулятору МНО — алгоритм контроля и титрации варфарина -->
+<div class="overlay" id="inrHelpOverlay">
+  <div class="modal" style="text-align:left; max-height:80vh; overflow-y:auto;">
+    <h2>Контроль МНО при приёме варфарина</h2>
+    <p style="font-size:13.5px; line-height:1.55;">
+      <b>Строгий контроль МНО!</b> Целевое значение МНО: 2,5–3,5. После достижения стабильного уровня МНО лабораторный контроль проводят регулярно каждые 3–4 недели.
+    </p>
+    <p style="font-size:13.5px; line-height:1.55;">
+      Контроль МНО каждые 3 дня до достижения целевых значений МНО (2,5–3,5). По достижении целевых значений — контроль 1 раз в 7 дней, далее 1 раз в месяц (в случае смены упаковки препарата — контроль МНО через 4 дня).
+    </p>
+    <p style="font-size:13.5px; font-weight:700; margin-bottom:6px;">Алгоритм титрации варфарина</p>
+    <ul style="font-size:13.5px; line-height:1.6; padding-left:18px; margin-top:0;">
+      <li>МНО &lt; 1,5 → увеличивают суточную дозу на 20% (1/2 таб.), контроль МНО через 3 дня</li>
+      <li>МНО 1,5–2,5 → увеличивают суточную дозу на 10% (1/4 таб.), контроль МНО через 3 дня</li>
+      <li>МНО 2,5–3,5 → оставляют суточную дозу без изменений, контроль МНО через 7 дней</li>
+      <li>МНО 3,5–4,0 → уменьшают суточную дозу на 10% (1/4 таб.), контроль МНО через 3 дня</li>
+      <li>МНО &gt; 4 → пропустить 1 приём, далее суточную дозу уменьшить на 1/2 таб., контроль МНО через 3 дня</li>
+    </ul>
+    <div class="hint">Это справочная информация от вашего лечащего врача. Не меняйте дозу препарата самостоятельно без контроля МНО.</div>
+    <div class="modal-actions">
+      <button class="btn" id="closeInrHelp">Понятно</button>
+    </div>
+  </div>
+</div>
+
 <!-- нижний лист действий над сообщением чата (копировать/ответить/изменить/удалить/закрепить/реакция) -->
 <div class="overlay" id="msgActionsOverlay">
   <div class="modal" id="msgActionsModal" style="padding:8px 10px 14px 10px;"></div>
@@ -299,7 +327,9 @@
 
 <script>
 /* ======================================================================
-   КардиоРеаб — приложение пациента (демо в рамке телефона).
+   КардиоРеаб — приложение пациента, полноэкранная установка на экран
+   «Домой» (не демо в рамке телефона — см. patient-app-v2.html/
+   CardioRehub_Demo для того варианта).
 
    Никакого Яндекс-токена, Client ID и т.п. здесь нет — приложение
    общается ОДНИМ POST-запросом со своим сервером (Yandex Cloud
@@ -307,6 +337,23 @@
    Единственное, что вводит пациент — 6-значный код при первом входе в
    чат, и (если задан) пароль на входе в приложение.
 ====================================================================== */
+
+// --app-height — реальная высота окна в px, вместо CSS 100%/100dvh
+// (которые в установленном на экран "Домой" PWA на iOS иногда считаются
+// не от фактического окна standalone-приложения, а от чуть большего
+// "layout viewport" — оставляя пустую полосу внизу под нижней
+// навигацией; подтверждено на живом iPhone). Пересчитываем при
+// изменении размера/ориентации и при возврате в уже открытое
+// приложение (iOS не перезагружает страницу при разворачивании PWA из
+// фона, но подписка на visibilitychange подстраховывает на случай,
+// если что-то всё же изменилось, пока приложение было свёрнуто).
+function setAppHeight(){
+  document.documentElement.style.setProperty("--app-height", window.innerHeight + "px");
+}
+setAppHeight();
+window.addEventListener("resize", setAppHeight);
+window.addEventListener("orientationchange", setAppHeight);
+document.addEventListener("visibilitychange", ()=>{ if(!document.hidden) setAppHeight(); });
 
 const BACKEND_URL = "https://functions.yandexcloud.net/d4e20a2aj3ug7ivdkjli";
 const CONTENT_URL = "https://raw.githubusercontent.com/nikitsmm/CardioRehub/refs/heads/main/content.json";
@@ -538,7 +585,13 @@ function renderDiary(){
   </div>
   <div class="section-card"><h3>Записи</h3><div id="diaryList">${renderDiaryList()}</div></div>
   <div class="section-card">
-    <h3>Калькулятор МНО (INR)</h3>
+    <div style="display:flex; align-items:center; gap:6px;">
+      <h3 style="margin:0;">Калькулятор МНО (INR)</h3>
+      <button id="inrHelpBtn" title="Алгоритм контроля МНО" aria-label="Подсказка"
+        style="flex-shrink:0; width:22px; height:22px; border-radius:50%; border:none;
+        background:var(--primary-light); color:var(--primary); font-size:13px; font-weight:700;
+        line-height:22px; text-align:center; padding:0; cursor:pointer;">i</button>
+    </div>
     <div class="mode-tabs">
       <button class="mode-btn ${inrMode==='check'?'active':''}" data-mode="check">Проверка</button>
       <button class="mode-btn ${inrMode==='calc'?'active':''}" data-mode="calc">Расчёт по ПВ</button>
@@ -554,6 +607,7 @@ function renderDiary(){
     renderDiary();
   });
   content.querySelectorAll(".mode-btn").forEach(b=> b.addEventListener("click", ()=>{ inrMode = b.dataset.mode; renderDiary(); }));
+  get("inrHelpBtn").addEventListener("click", ()=> get("inrHelpOverlay").classList.add("show"));
   renderInrBody();
 }
 function renderDiaryList(){
@@ -1102,6 +1156,7 @@ document.querySelectorAll(".nav-btn").forEach(btn=>{
 get("topRefresh").addEventListener("click", async ()=>{ if(state.tab === "library"){ await loadContent(); renderLibrary(); } });
 
 get("closePoll").addEventListener("click", ()=> get("pollOverlay").classList.remove("show"));
+get("closeInrHelp").addEventListener("click", ()=> get("inrHelpOverlay").classList.remove("show"));
 get("savePoll").addEventListener("click", ()=>{
   const v = parseInt(get("pollSeconds").value, 10);
   if(!v || v < 5) return;
