@@ -55,6 +55,15 @@
   .sync-banner.err{background:var(--emergency-light); color:var(--emergency);}
   .sync-banner .dot{width:6px; height:6px; border-radius:50%; background:var(--ok); flex-shrink:0;}
   .content{flex:1; overflow-y:auto; padding:14px 16px calc(90px + env(safe-area-inset-bottom)) 16px;}
+  /* Чат — особый случай: поле ввода должно "прилипать" сразу над нижним
+     меню, а не висеть посреди большого запаса отступа, рассчитанного на
+     прокрутку длинных списков статей. Поэтому на вкладке чата .content
+     сама становится flex-колонкой: chat-scroll (flex:1) занимает всё
+     доступное место и сам прокручивается, а chat-reply остаётся его
+     последним ребёнком — прижатым вплотную к низу, с минимальным
+     отступом ровно под высоту нижней навигации. */
+  .content.content-chat{display:flex; flex-direction:column; padding-bottom:calc(62px + env(safe-area-inset-bottom));}
+  .content.content-chat .chat-scroll{min-height:0;}
   .bottomnav{position:absolute; bottom:0; left:0; right:0; background:#fff; border-top:1px solid var(--border);
     display:flex; padding:4px 2px calc(8px + env(safe-area-inset-bottom)) 2px; overflow-x:auto;}
   .bottomnav button{flex:1; min-width:50px; background:none; border:none; display:flex; flex-direction:column;
@@ -191,6 +200,14 @@
   .msg-time-inline .ticks .tick.blue{color:#8fd0ff;}
   .msg-edited-mark{font-size:9.5px; font-style:italic; margin-right:2px;}
   .msg-retry{color:var(--emergency); font-weight:700; cursor:pointer; font-size:12px;}
+  /* Кнопка "⋯" на пузыре — открывает то же меню действий (реакции/
+     ответить/изменить/закрепить/удалить), что и долгое нажатие/правый
+     клик; нужна для наглядности — не все поймут, что можно зажать
+     сообщение пальцем. */
+  .msg-more-btn{position:absolute; top:2px; right:3px; width:18px; height:18px; border-radius:50%;
+    border:none; background:rgba(0,0,0,.08); color:inherit; font-size:11px; font-weight:700;
+    line-height:18px; text-align:center; padding:0; cursor:pointer; opacity:.75;}
+  .bubble.out .msg-more-btn{background:rgba(255,255,255,.22);}
   /* цитата отвечаемого сообщения — внутри пузыря, над текстом ответа.
      overflow:hidden + line-clamp вместо nowrap — чтобы длинная цитата не
      "раздувала" пузырь по ширине (баг, который мы уже словили и починили
@@ -221,7 +238,7 @@
   .reply-preview-from{font-size:11px; font-weight:700; color:var(--primary);}
   .reply-preview-text{font-size:11.5px; color:#6b7a90; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
   .reply-preview-close{background:none; border:none; font-size:15px; color:#6b7a90; cursor:pointer; flex-shrink:0;}
-  .chat-reply{display:flex; gap:8px; padding-top:8px; border-top:1px solid var(--border);}
+  .chat-reply{display:flex; gap:8px; padding-top:8px; border-top:1px solid var(--border); flex-shrink:0;}
   .chat-reply textarea{flex:1; min-height:38px; max-height:80px;}
   .chat-unread-badge{position:absolute; top:1px; right:6px; min-width:15px; height:15px; padding:0 3px;
     border-radius:8px; background:var(--emergency); color:#fff; font-size:9.5px; font-weight:700;
@@ -488,6 +505,7 @@ function render(){
   // баннер синхронизации относится только к методичке (content.json) — на
   // остальных вкладках он вводил в заблуждение.
   get("syncBanner").style.display = (state.tab === "library") ? "flex" : "none";
+  get("content").classList.toggle("content-chat", state.tab === "chat");
   if(state.tab === "library") renderLibrary();
   else if(state.tab === "checklists") renderChecklists();
   else if(state.tab === "diary") renderDiary();
@@ -899,33 +917,43 @@ function drawChatMessages(){
         ${Object.entries(m.reactions).filter(([,ids])=>ids.length).map(([emoji,ids])=>`
           <div class="reaction-chip ${ids.includes('client')?'mine':''}" data-react="${m.id}|${emoji}"><span>${emoji}</span><span>${ids.length}</span></div>`).join("")}
       </div>` : "";
-    const quickReactHtml = m.status === "sent" ? `
-      <div class="quick-react-bar">
-        ${REACTION_EMOJIS.map(e=>`<span data-quickreact="${m.id}|${e}">${e}</span>`).join("")}
-        <span class="qr-more" data-actions="${m.id}">⋯</span>
-      </div>` : "";
+    const moreBtnHtml = m.status === "sent" ? `<button class="msg-more-btn" data-actions="${m.id}" aria-label="Действия">⋯</button>` : "";
     html += `
       <div class="msg-row ${mine?'out':'in'} ${isGroupStart?'group-start':''}">
         <div class="msg-col">
           <div class="bubble ${mine?'out':'in'}" data-msg="${m.id}">
+            ${moreBtnHtml}
             ${replyHtml}
             <div class="bubble-text">${pinMarkHtml}${escapeHtml(m.text)}${timeInlineHtml}</div>
           </div>
-          ${quickReactHtml}
           ${reactionsHtml}
         </div>
       </div>`;
   });
   scroll.innerHTML = html;
-  scroll.querySelectorAll("[data-actions]").forEach(el=> el.addEventListener("click", ()=> openMessageActions(el.dataset.actions)));
+  scroll.querySelectorAll("[data-actions]").forEach(el=> el.addEventListener("click", e=>{ e.stopPropagation(); openMessageActions(el.dataset.actions); }));
   scroll.querySelectorAll("[data-retry]").forEach(el=> el.addEventListener("click", ()=> retryChatMessage(el.dataset.retry)));
   scroll.querySelectorAll("[data-react]").forEach(el=> el.addEventListener("click", ()=>{
     const [id, emoji] = el.dataset.react.split("|"); toggleChatReaction(id, emoji);
   }));
-  scroll.querySelectorAll("[data-quickreact]").forEach(el=> el.addEventListener("click", ()=>{
-    const [id, emoji] = el.dataset.quickreact.split("|"); toggleChatReaction(id, emoji);
-  }));
-  scroll.querySelectorAll("[data-msg]").forEach(el=> el.addEventListener("contextmenu", e=>{ e.preventDefault(); openMessageActions(el.dataset.msg); }));
+  // Меню действий (реакции/ответить/изменить/закрепить/удалить) — по
+  // правому клику на десктопе (contextmenu) и по ЗАЖАТИЮ пальцем на
+  // телефоне (долгое нажатие, ~420мс). Раньше реакции висели отдельной
+  // строкой под КАЖДЫМ сообщением постоянно — по просьбе убрано, теперь
+  // строго по жесту, как и остальные действия.
+  scroll.querySelectorAll("[data-msg]").forEach(el=>{
+    el.addEventListener("contextmenu", e=>{ e.preventDefault(); openMessageActions(el.dataset.msg); });
+    let pressTimer = null, moved = false;
+    el.addEventListener("touchstart", e=>{
+      moved = false;
+      pressTimer = setTimeout(()=>{
+        if(!moved){ navigator.vibrate?.(15); openMessageActions(el.dataset.msg); }
+      }, 420);
+    }, { passive: true });
+    el.addEventListener("touchmove", ()=>{ moved = true; clearTimeout(pressTimer); }, { passive: true });
+    el.addEventListener("touchend", ()=> clearTimeout(pressTimer));
+    el.addEventListener("touchcancel", ()=> clearTimeout(pressTimer));
+  });
   scroll.querySelectorAll("[data-scrollto]").forEach(el=> el.addEventListener("click", e=>{
     e.stopPropagation();
     const target = scroll.querySelector(`[data-msg="${el.dataset.scrollto}"]`);
