@@ -136,6 +136,14 @@
   .modal-actions{display:flex; justify-content:flex-end; gap:8px; margin-top:14px;}
   .hint{font-size:11px; color:#8b95a5; margin-top:6px; line-height:1.5;}
 
+  /* Бейдж версии — чтобы визуально отличать, какая сборка реально
+     открыта/опубликована на GitHub Pages (тот же приём, что уже
+     используется в портале реабилитации). Обновлять APP_VERSION при
+     каждой значимой правке, см. константу рядом с BACKEND_URL. */
+  .version-badge{position:fixed; right:8px; bottom:8px; z-index:40;
+    background:rgba(37,52,74,.75); color:#fff; font-size:10px;
+    padding:3px 7px; border-radius:6px; pointer-events:none;}
+
   /* лог-бокс диагностики сервера (см. #diagOverlay) */
   .log-box{background:#1b2432; color:#d7dee8; border-radius:8px; padding:10px 12px; margin-top:10px;
     font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11.5px; line-height:1.6;
@@ -399,6 +407,10 @@ window.addEventListener("resize", setAppHeight);
 window.addEventListener("orientationchange", setAppHeight);
 document.addEventListener("visibilitychange", ()=>{ if(!document.hidden) setAppHeight(); });
 
+// Версия сборки — бампать при каждой значимой правке (видна в углу
+// экрана и в логе "Диагностика сервера", помогает понять, какая именно
+// сборка реально открыта/опубликована на GitHub Pages).
+const APP_VERSION = "v1 · 26.08.2026";
 const BACKEND_URL = "https://93-77-169-7.sslip.io/api";
 // Методичка (content.json) переехала на свой сервер — см. loadContent()
 // (action_fetch_content). SURVEYS_URL пока остаётся на GitHub — перенос
@@ -780,7 +792,7 @@ function renderClaimScreen(){
   content.innerHTML = `
     <div class="claim-wrap">
       <p style="text-align:center; font-size:14.5px; margin-bottom:18px;">Введите код, который вам выдали при выписке</p>
-      <input id="claimCode" class="claim-code-input" maxlength="6" placeholder="000000">
+      <input id="claimCode" class="claim-code-input" maxlength="8" placeholder="________" autocapitalize="characters" autocorrect="off" spellcheck="false">
       <div class="lock-error" id="claimError"></div>
       <div style="margin-top:16px;"><button class="btn" id="claimSubmit" style="width:100%;">Войти</button></div>
     </div>`;
@@ -788,9 +800,14 @@ function renderClaimScreen(){
   get("claimCode").addEventListener("keydown", e=>{ if(e.key === "Enter") submitClaim(); });
 }
 async function submitClaim(){
-  const code = get("claimCode").value.trim();
+  // Инвайт-код — 8 символов, буквы+цифры (без похожих 0/O/1/I/L), см.
+  // gen_invite_code в chatstore/app.py. Раньше был 6-значным цифровым —
+  // старая проверка "/^\d{6}$/" отклоняла реальные коды администратора
+  // как невалидные и мешала войти вообще; здесь только мягкая проверка
+  // формата для UX, окончательно код проверяет сервер.
+  const code = get("claimCode").value.trim().toUpperCase();
   const err = get("claimError");
-  if(!/^\d{6}$/.test(code)){ err.textContent = "Код состоит из 6 цифр"; return; }
+  if(!/^[A-Z0-9]{4,12}$/.test(code)){ err.textContent = "Введите код полностью"; return; }
   err.textContent = "Проверка...";
   try{
     const res = await api("claim", { code, deviceId: state.deviceId });
@@ -1235,6 +1252,7 @@ async function runDiag(){
   const push = (text, level) => lines.push({text, level: level || ""});
   push("=== КардиоРеаб (пациент) — диагностика сервера ===");
   push("Собрано: " + new Date().toLocaleString("ru-RU"));
+  push("Версия приложения: " + APP_VERSION);
   push("Адрес сервера: " + BACKEND_URL);
   push("Мой accountId: " + (state.accountId || "(ещё не вошёл по коду)"));
   push("User-Agent: " + navigator.userAgent);
@@ -1348,5 +1366,7 @@ get("lockPass").addEventListener("keydown", e=>{ if(e.key === "Enter") submitLoc
   render();
 })();
 </script>
+<div class="version-badge">КардиоРеаб · <span id="appVersion"></span></div>
+<script>document.getElementById("appVersion").textContent = APP_VERSION;</script>
 </body>
 </html>
