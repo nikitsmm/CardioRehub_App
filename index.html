@@ -136,6 +136,15 @@
   .modal-actions{display:flex; justify-content:flex-end; gap:8px; margin-top:14px;}
   .hint{font-size:11px; color:#8b95a5; margin-top:6px; line-height:1.5;}
 
+  /* лог-бокс диагностики сервера (см. #diagOverlay) */
+  .log-box{background:#1b2432; color:#d7dee8; border-radius:8px; padding:10px 12px; margin-top:10px;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11.5px; line-height:1.6;
+    max-height:40vh; overflow-y:auto; white-space:pre-wrap; word-break:break-word;}
+  .log-box .lvl-error{color:#ff9b9b;}
+  .status-line{font-size:12px; margin-top:8px;}
+  .status-line.ok{color:#3d8b57;}
+  .status-line.err{color:#B0454B;}
+
   /* AppLock */
   .lock-screen{position:absolute; inset:0; background:var(--bg); z-index:50; display:flex;
     flex-direction:column; align-items:stretch; justify-content:center; padding:28px;}
@@ -282,7 +291,10 @@
 
   <div class="topbar">
     <h1 id="topTitle">Методичка</h1>
-    <div class="icons"><button id="topRefresh" title="Обновить">🔄</button></div>
+    <div class="icons">
+      <button id="topDiag" title="Диагностика сервера">🩺</button>
+      <button id="topRefresh" title="Обновить">🔄</button>
+    </div>
   </div>
   <div class="sync-banner" id="syncBanner"><span class="dot"></span><span id="syncLabel">—</span></div>
 
@@ -337,6 +349,21 @@
   </div>
 </div>
 
+<!-- диагностика сервера — проверяет разом chatstore/Centrifugo/MinIO/место на диске,
+     см. action_health_check в backend/app.py -->
+<div class="overlay" id="diagOverlay">
+  <div class="modal" style="text-align:left; max-height:80vh; overflow-y:auto;">
+    <h2>🩺 Диагностика сервера</h2>
+    <p class="hint" style="margin-top:0;">Проверяет, доступен ли сервер и все его части (переписка, реальное время, хранилище методички). Если что-то не открывается — нажми «Проверить», скопируй результат и пришли администратору вместо описания проблемы словами.</p>
+    <button class="btn" id="diagRun" style="width:100%;">Проверить</button>
+    <div class="log-box" id="diagBox" hidden></div>
+    <div class="modal-actions">
+      <button class="btn ghost" id="diagCopy" hidden>Скопировать</button>
+      <button class="btn" id="closeDiag">Закрыть</button>
+    </div>
+  </div>
+</div>
+
 <!-- нижний лист действий над сообщением чата (копировать/ответить/изменить/удалить/закрепить/реакция) -->
 <div class="overlay" id="msgActionsOverlay">
   <div class="modal" id="msgActionsModal" style="padding:8px 10px 14px 10px;"></div>
@@ -372,8 +399,10 @@ window.addEventListener("resize", setAppHeight);
 window.addEventListener("orientationchange", setAppHeight);
 document.addEventListener("visibilitychange", ()=>{ if(!document.hidden) setAppHeight(); });
 
-const BACKEND_URL = "https://functions.yandexcloud.net/d4e20a2aj3ug7ivdkjli";
-const CONTENT_URL = "https://raw.githubusercontent.com/nikitsmm/CardioRehub/refs/heads/main/content.json";
+const BACKEND_URL = "https://93-77-169-7.sslip.io/api";
+// Методичка (content.json) переехала на свой сервер — см. loadContent()
+// (action_fetch_content). SURVEYS_URL пока остаётся на GitHub — перенос
+// анкет не запрашивался, только методички.
 const SURVEYS_URL = "https://raw.githubusercontent.com/nikitsmm/CardioRehub/refs/heads/main/surveys.json";
 const BUILT_IN_PASSWORD = "Reabilitation_Ob";
 const STORAGE_PREFIX = "kardiorehab_patient_";
@@ -437,9 +466,11 @@ const get = id => document.getElementById(id);
 // ---------- контент методички/анкет — реальные данные с GitHub ----------
 async function loadContent(){
   try{
-    const res = await fetch(CONTENT_URL);
-    if(!res.ok) throw new Error("http " + res.status);
-    state.content = await res.json();
+    // Методичка раньше тянулась напрямую с GitHub (CONTENT_URL) — теперь
+    // хранится и редактируется на своём сервере (см. action_fetch_content
+    // в backend/app.py, редактор в CardioRehub_Admin — вкладка "Контент").
+    const res = await api("fetch_content", {});
+    state.content = res.content;
     setSyncBanner("Контент обновлён", "ok");
   }catch(e){
     setSyncBanner("Нет связи — используется кэш", "warn");
@@ -1182,6 +1213,76 @@ document.querySelectorAll(".nav-btn").forEach(btn=>{
   });
 });
 get("topRefresh").addEventListener("click", async ()=>{ if(state.tab === "library"){ await loadContent(); renderLibrary(); } });
+
+// ---------- Диагностика сервера (см. action_health_check в backend/app.py) ----------
+let diagLastText = "";
+function renderDiagLines(lines){
+  const box = get("diagBox");
+  box.hidden = false;
+  box.innerHTML = lines.map(l => `<div class="${l.level === "error" ? "lvl-error" : ""}">${escapeHtml(l.text)}</div>`).join("");
+  box.scrollTop = 0;
+  diagLastText = lines.map(l => l.text).join("\n");
+  get("diagCopy").hidden = false;
+}
+async function runDiag(){
+  const btn = get("diagRun");
+  btn.disabled = true;
+  get("diagBox").hidden = false;
+  get("diagBox").innerHTML = `<div style="opacity:.5">Проверяю…</div>`;
+  get("diagCopy").hidden = true;
+
+  const lines = [];
+  const push = (text, level) => lines.push({text, level: level || ""});
+  push("=== КардиоРеаб (пациент) — диагностика сервера ===");
+  push("Собрано: " + new Date().toLocaleString("ru-RU"));
+  push("Адрес сервера: " + BACKEND_URL);
+  push("Мой accountId: " + (state.accountId || "(ещё не вошёл по коду)"));
+  push("User-Agent: " + navigator.userAgent);
+
+  try{
+    const r = await api("health_check", {});
+    push("");
+    push("Время сервера: " + r.serverTime);
+    push("");
+    push("--- Проверка служб ---");
+    (r.checks || []).forEach(c => push((c.ok ? "✅ " : "❌ ") + c.name + " — " + c.detail + " (" + c.ms + " мс)", c.ok ? "" : "error"));
+    if(r.config){
+      push("");
+      push("--- Конфигурация сервера ---");
+      Object.keys(r.config).forEach(k => push(k + ": " + r.config[k]));
+    }
+    push("");
+    push(r.ok ? "ИТОГ: всё в порядке ✅" : "ИТОГ: есть проблемы, см. выше ❌", r.ok ? "" : "error");
+  }catch(e){
+    push("");
+    push("❌ НЕ УДАЛОСЬ ПОДКЛЮЧИТЬСЯ К СЕРВЕРУ ВООБЩЕ", "error");
+    push("Ошибка: " + e.message, "error");
+    push("");
+    push("До сервера запрос не дошёл — проверьте интернет-соединение.");
+  }
+  renderDiagLines(lines);
+  btn.disabled = false;
+}
+get("topDiag").addEventListener("click", ()=>{ get("diagOverlay").classList.add("show"); });
+get("closeDiag").addEventListener("click", ()=> get("diagOverlay").classList.remove("show"));
+get("diagRun").addEventListener("click", runDiag);
+get("diagCopy").addEventListener("click", ()=>{
+  const statusEl = get("diagCopy");
+  const done = ()=>{ statusEl.textContent = "Скопировано"; setTimeout(()=> statusEl.textContent = "Скопировать", 1500); };
+  const fail = ()=>{ statusEl.textContent = "Не удалось скопировать"; setTimeout(()=> statusEl.textContent = "Скопировать", 1500); };
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(diagLastText).then(done).catch(fail);
+  }else{
+    try{
+      const ta = document.createElement("textarea");
+      ta.value = diagLastText; ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+      done();
+    }catch(e){ fail(); }
+  }
+});
 
 get("closePoll").addEventListener("click", ()=> get("pollOverlay").classList.remove("show"));
 get("closeInrHelp").addEventListener("click", ()=> get("inrHelpOverlay").classList.remove("show"));
